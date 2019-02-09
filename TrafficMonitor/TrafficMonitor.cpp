@@ -128,7 +128,7 @@ void CTrafficMonitorApp::LoadConfig()
 
 	//其他设置
 	m_cfg_data.m_show_internet_ip = ini.GetBool(L"connection_details", L"show_internet_ip", false);
-	m_cfg_data.m_use_log_scale = ini.GetBool(_T("histroy_traffic"), _T("use_log_scale"), false);
+	m_cfg_data.m_use_log_scale = ini.GetBool(_T("histroy_traffic"), _T("use_log_scale"), true);
 
 	m_no_multistart_warning = ini.GetBool(_T("other"), _T("no_multistart_warning"), false);
 	m_notify_interval = ini.GetInt(_T("other"), _T("notify_interval"), 60);
@@ -148,11 +148,6 @@ void CTrafficMonitorApp::SaveConfig()
 	ini.WriteBool(L"general", L"show_all_interface", m_general_data.show_all_interface);
 
 	//主窗口设置
-	//保存前先获取窗口的位置
-	CRect rect;
-	m_pMainWnd->GetWindowRect(rect);
-	m_cfg_data.m_position_x = rect.left;
-	m_cfg_data.m_position_y = rect.top;
 	ini.WriteInt(L"config", L"transparency", m_cfg_data.m_transparency);
 	ini.WriteBool(L"config", L"always_on_top", m_cfg_data.m_always_on_top);
 	ini.WriteBool(L"config", L"lock_window_pos", m_cfg_data.m_lock_window_pos);
@@ -231,6 +226,8 @@ void CTrafficMonitorApp::SaveConfig()
 	ini.WriteBool(_T("other"), _T("exit_when_start_by_restart_manager"), m_exit_when_start_by_restart_manager);
 	ini.WriteInt(_T("other"), _T("notify_interval"), m_notify_interval);
 
+	ini.WriteString(L"app", L"version", VERSION);
+
 	//检查是否保存成功
 	if (!ini.Save())
 	{
@@ -242,6 +239,39 @@ void CTrafficMonitorApp::SaveConfig()
 			AfxMessageBox(info, MB_ICONWARNING);
 		}
 		m_cannot_save_config_warning = false;
+		return;
+	}
+}
+
+void CTrafficMonitorApp::LoadGlobalConfig()
+{
+	bool portable_mode_default{ false };
+	wstring global_cfg_path{ m_module_dir + L"global_cfg.ini" };
+	if (!CCommon::FileExist(global_cfg_path.c_str()))		//如果global_cfg.ini不存在，则根据AppData/Roaming/TrafficMonitor目录下是否存在config.ini来判断配置文件的保存位置
+	{
+		portable_mode_default = !CCommon::FileExist((m_appdata_dir + L"config.ini").c_str());
+	}
+
+	CIniHelper ini{ global_cfg_path };
+	m_general_data.portable_mode = ini.GetBool(L"config", L"portable_mode", portable_mode_default);
+}
+
+void CTrafficMonitorApp::SaveGlobalConfig()
+{
+	CIniHelper ini{ m_module_dir + L"global_cfg.ini" };
+	ini.WriteBool(L"config", L"portable_mode", m_general_data.portable_mode);
+
+	//检查是否保存成功
+	if (!ini.Save())
+	{
+		if (m_cannot_save_global_config_warning)
+		{
+			CString info;
+			info.LoadString(IDS_CONNOT_SAVE_CONFIG_WARNING);
+			info.Replace(_T("<%file_path%>"), m_module_dir.c_str());
+			AfxMessageBox(info, MB_ICONWARNING);
+		}
+		m_cannot_save_global_config_warning = false;
 		return;
 	}
 }
@@ -418,11 +448,18 @@ BOOL CTrafficMonitorApp::InitInstance()
 	}
 	m_module_dir = CCommon::GetModuleDir();
 	m_system_dir = CCommon::GetSystemDir();
+	m_appdata_dir = CCommon::GetAppDataConfigDir();
+
+	LoadGlobalConfig();
+
 #ifdef _DEBUG
 	m_config_dir = L".\\";
 	m_skin_path = L".\\skins";
 #else
-	m_config_dir = CCommon::GetAppDataConfigDir();
+	if (m_general_data.portable_mode)
+		m_config_dir = m_module_dir;
+	else
+		m_config_dir = m_appdata_dir;
 	m_skin_path = m_module_dir + L"skins";
 #endif
 	//AppData里面的程序配置文件路径
@@ -430,18 +467,16 @@ BOOL CTrafficMonitorApp::InitInstance()
 	m_history_traffic_path = m_config_dir + L"history_traffic.dat";
 	m_log_path = m_config_dir + L"error.log";
 
-#ifndef _DEBUG
-	//原来的、程序所在目录下的配置文件的路径
-	wstring config_path_old = m_module_dir + L"config.ini";
-	wstring history_traffic_path_old = m_module_dir + L"history_traffic.dat";
-	wstring log_path_old = m_module_dir + L"error.log";
-	//如果程序所在目录下含有配置文件，则将其移动到AppData对应的目录下面
-	CCommon::MoveAFile(config_path_old.c_str(), m_config_path.c_str());
-	CCommon::MoveAFile(history_traffic_path_old.c_str(), m_history_traffic_path.c_str());
-	CCommon::MoveAFile(log_path_old.c_str(), m_log_path.c_str());
-#endif // !_DEBUG
-
-
+//#ifndef _DEBUG
+//	//原来的、程序所在目录下的配置文件的路径
+//	wstring config_path_old = m_module_dir + L"config.ini";
+//	wstring history_traffic_path_old = m_module_dir + L"history_traffic.dat";
+//	wstring log_path_old = m_module_dir + L"error.log";
+//	//如果程序所在目录下含有配置文件，则将其移动到AppData对应的目录下面
+//	CCommon::MoveAFile(config_path_old.c_str(), m_config_path.c_str());
+//	CCommon::MoveAFile(history_traffic_path_old.c_str(), m_history_traffic_path.c_str());
+//	CCommon::MoveAFile(log_path_old.c_str(), m_log_path.c_str());
+//#endif // !_DEBUG
 
 	bool is_windows10_fall_creator = m_win_version.IsWindows10FallCreatorOrLater();
 

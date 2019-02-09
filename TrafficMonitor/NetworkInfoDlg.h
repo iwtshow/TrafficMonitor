@@ -24,12 +24,14 @@ protected:
 
 	vector<NetWorkConection>& m_connections;
 	MIB_IFROW* m_pIfRow;
-	int m_connection_selected;
+	int m_connection_selected;		//当前对话框显示的连接
+	int m_current_connection;		//初始选择的连接
 
 	CListCtrl m_info_list;
 	CMenu m_menu;
 	CString m_selected_string;
 	CSize m_min_size;
+	CFont m_font_bold;		//默认字体的粗体
 
 	CWinThread* m_pGetIPThread;			//获取外网IP的线程
 
@@ -54,4 +56,6 @@ public:
 	virtual BOOL PreTranslateMessage(MSG* pMsg);
 	afx_msg void OnGetMinMaxInfo(MINMAXINFO* lpMMI);
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg BOOL OnMouseWheel(UINT nFlags, short zDelta, CPoint pt);
+	afx_msg void OnNMDblclkInfoList1(NMHDR *pNMHDR, LRESULT *pResult);
 };

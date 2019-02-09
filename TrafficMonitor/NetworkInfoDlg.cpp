@@ -14,7 +14,7 @@ IMPLEMENT_DYNAMIC(CNetworkInfoDlg, CDialog)
 CNetworkInfoDlg::CNetworkInfoDlg(vector<NetWorkConection>& adapters, MIB_IFROW* pIfRow, int connection_selected, CWnd* pParent /*=NULL*/)
 	: CDialog(IDD_NETWORK_INFO_DIALOG, pParent), m_connections(adapters), m_pIfRow(pIfRow), m_connection_selected(connection_selected)
 {
-
+	m_current_connection = connection_selected;
 }
 
 CNetworkInfoDlg::~CNetworkInfoDlg()
@@ -102,6 +102,12 @@ void CNetworkInfoDlg::ShowInfo()
 	CString str;
 	str.Format(_T("%d/%d"), m_connection_selected + 1, m_connections.size());
 	SetDlgItemText(IDC_INDEX_STATIC, str);
+	CFont* font = GetFont();
+	CWnd* index_static = GetDlgItem(IDC_INDEX_STATIC);
+	if (m_current_connection == m_connection_selected)
+		index_static->SetFont(&m_font_bold);
+	else
+		index_static->SetFont(font);
 }
 
 void CNetworkInfoDlg::GetProgramElapsedTime()
@@ -154,6 +160,8 @@ BEGIN_MESSAGE_MAP(CNetworkInfoDlg, CDialog)
 	ON_BN_CLICKED(IDC_NEXT_BUTTON, &CNetworkInfoDlg::OnBnClickedNextButton)
 	ON_WM_GETMINMAXINFO()
 	ON_WM_TIMER()
+	ON_WM_MOUSEWHEEL()
+	ON_NOTIFY(NM_DBLCLK, IDC_INFO_LIST1, &CNetworkInfoDlg::OnNMDblclkInfoList1)
 END_MESSAGE_MAP()
 
 
@@ -172,6 +180,9 @@ BOOL CNetworkInfoDlg::OnInitDialog()
 	CRect rect;
 	GetWindowRect(rect);
 	m_min_size = rect.Size();
+
+	//重新获取IP地址
+	CAdapterCommon::RefreshIpAddress(m_connections);
 
 	//初始化列表控件
 	m_info_list.GetClientRect(rect);
@@ -197,13 +208,21 @@ BOOL CNetworkInfoDlg::OnInitDialog()
 	m_info_list.InsertItem(11, CCommon::LoadText(IDS_BYTES_RECEIVED_SINCE_START));
 	m_info_list.InsertItem(12, CCommon::LoadText(IDS_BYTES_SENT_SINCE_START));
 	m_info_list.InsertItem(13, CCommon::LoadText(IDS_PROGRAM_ELAPSED_TIME));
+	m_info_list.InsertItem(14, CCommon::LoadText(IDS_INTERNET_IP_ADDRESS));
 	if (theApp.m_cfg_data.m_show_internet_ip)
 	{
-		m_info_list.InsertItem(14, CCommon::LoadText(IDS_INTERNET_IP_ADDRESS));
 		m_info_list.SetItemText(14, 1, CCommon::LoadText(IDS_ACQUIRING, _T("...")));
+	}
+	else
+	{
+		m_info_list.SetItemText(14, 1, CCommon::LoadText(IDS_DOUBLE_CLICK_TO_ACQUIRE));
 	}
 
 	//显示列表中的信息
+	LOGFONT lf{};
+	GetFont()->GetLogFont(&lf);
+	lf.lfWeight = FW_BOLD;
+	m_font_bold.CreateFontIndirect(&lf);
 	ShowInfo();
 	GetProgramElapsedTime();
 
@@ -325,4 +344,33 @@ void CNetworkInfoDlg::OnTimer(UINT_PTR nIDEvent)
 	}
 
 	CDialog::OnTimer(nIDEvent);
+}
+
+BOOL CNetworkInfoDlg::OnMouseWheel(UINT nFlags, short zDelta, CPoint pt)
+{
+	// TODO: 在此添加消息处理程序代码和/或调用默认值
+	//通过鼠标滚轮翻页
+	if (zDelta > 0)
+	{
+		OnBnClickedPreviousButton();
+	}
+	if (zDelta < 0)
+	{
+		OnBnClickedNextButton();
+	}
+
+	return CDialog::OnMouseWheel(nFlags, zDelta, pt);
+}
+
+
+void CNetworkInfoDlg::OnNMDblclkInfoList1(NMHDR *pNMHDR, LRESULT *pResult)
+{
+	LPNMITEMACTIVATE pNMItemActivate = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
+	// TODO: 在此添加控件通知处理程序代码
+	if (!theApp.m_cfg_data.m_show_internet_ip && pNMItemActivate->iItem == 14)		//双击了IP地址一行时
+	{
+		m_info_list.SetItemText(14, 1, CCommon::LoadText(IDS_ACQUIRING, _T("...")));
+		m_pGetIPThread = AfxBeginThread(GetInternetIPThreadFunc, this);
+	}
+	*pResult = 0;
 }

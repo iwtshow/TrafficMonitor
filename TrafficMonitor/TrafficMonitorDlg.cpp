@@ -148,8 +148,11 @@ CString CTrafficMonitorDlg::GetMouseTipsInfo()
 {
 	CString tip_info;
 	CString temp;
-	temp.Format(_T("%s: %s"), CCommon::LoadText(IDS_TRAFFIC_USED_TODAY),
-		CCommon::KBytesToString(static_cast<unsigned int>(theApp.m_today_traffic / 1024)));
+	temp.Format(_T("%s: %s (%s: %s/%s: %s)"), CCommon::LoadText(IDS_TRAFFIC_USED_TODAY),
+		CCommon::KBytesToString(static_cast<unsigned int>((theApp.m_today_up_traffic + theApp.m_today_down_traffic)/ 1024)),
+		CCommon::LoadText(IDS_UPLOAD), CCommon::KBytesToString(static_cast<unsigned int>(theApp.m_today_up_traffic / 1024)),
+		CCommon::LoadText(IDS_DOWNLOAD), CCommon::KBytesToString(static_cast<unsigned int>(theApp.m_today_down_traffic / 1024))
+		);
 	tip_info += temp;
 	if (theApp.m_cfg_data.m_show_more_info)
 	{
@@ -521,10 +524,14 @@ void CTrafficMonitorDlg::SaveHistoryTraffic()
 	ofstream file{ theApp.m_history_traffic_path };
 	for (const auto& history_traffic : m_history_traffics)
 	{
-		char date_str[16];
-		sprintf_s(date_str, "%.4d/%.2d/%.2d ", history_traffic.year, history_traffic.month, history_traffic.day);
-		file << date_str << history_traffic.kBytes << std::endl;
+		char buff[64];
+		if (history_traffic.mixed)
+			sprintf_s(buff, "%.4d/%.2d/%.2d %u", history_traffic.year, history_traffic.month, history_traffic.day, history_traffic.down_kBytes);
+		else
+			sprintf_s(buff, "%.4d/%.2d/%.2d %u/%u", history_traffic.year, history_traffic.month, history_traffic.day, history_traffic.up_kBytes, history_traffic.down_kBytes);
+		file << buff << std::endl;
 	}
+	file.close();
 }
 
 void CTrafficMonitorDlg::LoadHistoryTraffic()
@@ -545,9 +552,24 @@ void CTrafficMonitorDlg::LoadHistoryTraffic()
 			traffic.month = atoi(temp.c_str());
 			temp = current_line.substr(8, 2);
 			traffic.day = atoi(temp.c_str());
-			temp = current_line.substr(11);
-			traffic.kBytes = atoi(temp.c_str());
-			m_history_traffics.push_back(traffic);
+
+			int index = current_line.find(L'/', 11);
+			traffic.mixed = (index == wstring::npos);
+			if (traffic.mixed)
+			{
+				temp = current_line.substr(11);
+				traffic.down_kBytes = atoi(temp.c_str());
+				traffic.up_kBytes = 0;
+			}
+			else
+			{
+				temp = current_line.substr(11, index - 11);
+				traffic.up_kBytes = atoi(temp.c_str());
+				temp = current_line.substr(index + 1);
+				traffic.down_kBytes = atoi(temp.c_str());
+			}
+			if (traffic.year > 0 && traffic.month > 0 && traffic.day > 0 && traffic.kBytes() > 0)
+				m_history_traffics.push_back(traffic);
 		}
 	}
 
@@ -556,7 +578,9 @@ void CTrafficMonitorDlg::LoadHistoryTraffic()
 	traffic.year = current_time.wYear;
 	traffic.month = current_time.wMonth;
 	traffic.day = current_time.wDay;
-	traffic.kBytes = 0;
+	traffic.up_kBytes = 0;
+	traffic.down_kBytes = 0;
+	traffic.mixed = false;
 
 	if (m_history_traffics.empty())
 	{
@@ -573,7 +597,8 @@ void CTrafficMonitorDlg::LoadHistoryTraffic()
 		{
 			if (HistoryTraffic::DateEqual(m_history_traffics[i], m_history_traffics[i + 1]))
 			{
-				m_history_traffics[i].kBytes += m_history_traffics[i + 1].kBytes;
+				m_history_traffics[i].up_kBytes += m_history_traffics[i + 1].up_kBytes;
+				m_history_traffics[i].down_kBytes += m_history_traffics[i + 1].down_kBytes;
 				m_history_traffics.erase(m_history_traffics.begin() + i + 1);
 			}
 		}
@@ -581,9 +606,15 @@ void CTrafficMonitorDlg::LoadHistoryTraffic()
 
 	//如果列表第一个项目的日期是今天，则将第一个项目统计的流量作为今天使用的流量，否则，在列表的前面插入一个日期为今天的项目
 	if (HistoryTraffic::DateEqual(m_history_traffics[0], traffic))
-		theApp.m_today_traffic = static_cast<__int64>(m_history_traffics[0].kBytes) * 1024;
+	{
+		theApp.m_today_up_traffic = static_cast<__int64>(m_history_traffics[0].up_kBytes) * 1024;
+		theApp.m_today_down_traffic = static_cast<__int64>(m_history_traffics[0].down_kBytes) * 1024;
+		m_history_traffics[0].mixed = false;
+	}
 	else
+	{
 		m_history_traffics.push_front(traffic);
+	}
 
 }
 
@@ -604,6 +635,7 @@ void CTrafficMonitorDlg::_OnOptions(int tab)
 
 		ApplySettings();
 		theApp.SaveConfig();
+		theApp.SaveGlobalConfig();
 
 		//CTaskBarDlg::SaveConfig();
 		if (m_tBarDlg != nullptr)
@@ -691,6 +723,11 @@ void CTrafficMonitorDlg::LoadBackGroundImage()
 	{
 		wnd_rgn.CreateRectRgnIndirect(CRect(CPoint(0, 0), image_size));		//载入掩码图片失败，则使用窗口大小作为窗口区域
 	}
+	//避免获取到的窗口区域为空
+	CRgn empty_rgn;
+	empty_rgn.CreateRectRgnIndirect(CRect{});	//创建一个空的CRgn对象
+	if(wnd_rgn.EqualRgn(&empty_rgn))
+		wnd_rgn.SetRectRgn(CRect(CPoint(0, 0), image_size));	//如果获取到的窗口区域为空，则使用窗口大小作为窗口区域
 	SetWindowRgn(wnd_rgn, TRUE);		//设置窗口区域
 }
 
@@ -848,6 +885,8 @@ BOOL CTrafficMonitorDlg::OnInitDialog()
 	if (theApp.m_cfg_data.m_hide_main_window || (theApp.m_cfg_data.m_position_x == 0 && theApp.m_cfg_data.m_position_y == 0))
 		SetTransparency(0);
 
+	SetTimer(TASKBAR_TIMER, 100, NULL);
+
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -932,8 +971,16 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
 			}
 		}
 
-		if (m_timer_cnt % 30 == 26)		//每隔30秒钟保存一次设置
-			theApp.SaveConfig();
+		if (m_timer_cnt % 30 == 26)		//每隔30秒钟检测一次窗口位置，当窗口位置发生变化时保存设置
+		{
+			static int last_pos_x{ -1 }, last_pos_y{ -1 };
+			if (last_pos_x != theApp.m_cfg_data.m_position_x || last_pos_y != theApp.m_cfg_data.m_position_y)
+			{
+				theApp.SaveConfig();
+				last_pos_x = theApp.m_cfg_data.m_position_x;
+				last_pos_y = theApp.m_cfg_data.m_position_y;
+			}
+		}
 
 		if (m_timer_cnt % 2 == 1)		//每隔2秒钟获取一次屏幕区域
 		{
@@ -963,7 +1010,7 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
 		}
 
 		//如果发送和接收的字节数为0或上次发送和接收的字节数为0或当前连接已改变时，网速无效
-		if ((m_in_bytes == 0 && m_out_bytes == 0) || (m_last_in_bytes == 0 && m_last_out_bytes) || m_connection_change_flag)
+		if ((m_in_bytes == 0 && m_out_bytes == 0) || (m_last_in_bytes == 0 && m_last_out_bytes == 0) || m_connection_change_flag)
 		{
 			theApp.m_in_speed = 0;
 			theApp.m_out_speed = 0;
@@ -1007,22 +1054,25 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
 			traffic.year = current_time.wYear;
 			traffic.month = current_time.wMonth;
 			traffic.day = current_time.wDay;
-			traffic.kBytes = 0;
+			traffic.mixed = false;
 			m_history_traffics.push_front(traffic);
-			theApp.m_today_traffic = 0;
+			theApp.m_today_up_traffic = 0;
+			theApp.m_today_down_traffic = 0;
 		}
 
 		//统计今天已使用的流量
-		theApp.m_today_traffic += (theApp.m_in_speed + theApp.m_out_speed);
-		m_history_traffics[0].kBytes = static_cast<unsigned int>(theApp.m_today_traffic / 1024);
+		theApp.m_today_up_traffic += theApp.m_out_speed;
+		theApp.m_today_down_traffic += theApp.m_in_speed;
+		m_history_traffics[0].up_kBytes = static_cast<unsigned int>(theApp.m_today_up_traffic / 1024);
+		m_history_traffics[0].down_kBytes = static_cast<unsigned int>(theApp.m_today_down_traffic / 1024);
 		//每隔30秒保存一次流量历史记录
 		if (m_timer_cnt % 30 == 10)
 		{
 			static unsigned int last_today_kbytes;
-			if (m_history_traffics[0].kBytes - last_today_kbytes >= 100)	//只有当流量变化超过100KB时才保存历史流量记录，防止磁盘写入过于频繁
+			if (m_history_traffics[0].kBytes() - last_today_kbytes >= 100u)	//只有当流量变化超过100KB时才保存历史流量记录，防止磁盘写入过于频繁
 			{
 				SaveHistoryTraffic();
-				last_today_kbytes = m_history_traffics[0].kBytes;
+				last_today_kbytes = m_history_traffics[0].kBytes();
 			}
 		}
 
@@ -1177,13 +1227,13 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
 				traffic_tip_value = static_cast<__int64>(theApp.m_general_data.traffic_tip_value) * 1024 * 1024;
 			else
 				traffic_tip_value = static_cast<__int64>(theApp.m_general_data.traffic_tip_value) * 1024 * 1024 * 1024;
-			if (last_today_traffic < traffic_tip_value && theApp.m_today_traffic >= traffic_tip_value)
+			if (last_today_traffic < traffic_tip_value && (theApp.m_today_up_traffic + theApp.m_today_down_traffic) >= traffic_tip_value)
 			{
 				CString info;
 				info.Format(CCommon::LoadText(IDS_TODAY_TRAFFIC_EXCEED, _T(" %d %s!")), theApp.m_general_data.traffic_tip_value, (theApp.m_general_data.traffic_tip_unit==0?_T("MB"):_T("GB")));
 				ShowNotifyTip(CCommon::LoadText(_T("TrafficMonitor "), IDS_NOTIFY), info.GetString());
 			}
-			last_today_traffic = theApp.m_today_traffic;
+			last_today_traffic = theApp.m_today_up_traffic + theApp.m_today_down_traffic;
 		}
 
 		m_timer_cnt++;
@@ -1193,6 +1243,15 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
 	{
 		AutoSelect();
 		KillTimer(DELAY_TIMER);
+	}
+
+	if (nIDEvent == TASKBAR_TIMER)
+	{
+		if (m_tBarDlg != nullptr)
+		{
+			m_tBarDlg->AdjustWindowPos();
+			m_tBarDlg->Invalidate(FALSE);
+		}
 	}
 
 	CDialogEx::OnTimer(nIDEvent);
@@ -1402,7 +1461,9 @@ void CTrafficMonitorDlg::OnClose()
 {
 	// TODO: 在此添加消息处理程序代码和/或调用默认值
 	theApp.m_cannot_save_config_warning = true;
+	theApp.m_cannot_save_global_config_warning = true;
 	theApp.SaveConfig();	//退出前保存设置到ini文件
+	theApp.SaveGlobalConfig();
 	SaveHistoryTraffic();
 
 	if (m_tBarDlg != nullptr)
@@ -1513,6 +1574,13 @@ void CTrafficMonitorDlg::OnMove(int x, int y)
 	CDialogEx::OnMove(x, y);
 
 	// TODO: 在此处添加消息处理程序代码
+
+	if (!m_first_start)
+	{
+		theApp.m_cfg_data.m_position_x = x;
+		theApp.m_cfg_data.m_position_y = y;
+	}
+
 	//确保窗口不会超出屏幕范围
 	CheckWindowPos();
 }
